@@ -3,9 +3,11 @@ on:
   push:
     paths:
       - "packages/**"
+      - ".github/workflows/publish-commit.yml"
   pull_request:
     paths:
       - "packages/**"
+      - ".github/workflows/publish-commit.yml"
 
 permissions:
   contents: read
@@ -18,6 +20,8 @@ env:
   NX_VERBOSE_LOGGING: true
   NX_CI_EXECUTION_ID: ${{ github.head_ref }}-${{ github.sha }}-${{ github.run_attempt }}
   NX_CI_EXECUTION_ENV: "Publish Commit"
+  # Upstream has the pkg-pr-new app; forks explicitly opt in after installing it.
+  PKG_PR_NEW_ENABLED: ${{ github.repository == 'CopilotKit/CopilotKit' || vars.PKG_PR_NEW_ENABLED == 'true' }}
 
 jobs:
   build:
@@ -54,10 +58,12 @@ jobs:
 
       - name: Configure Nx Cloud environment
         run: |
-          echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-pkg-pr-new" >> $GITHUB_ENV
-          echo "NX_CLOUD_NO_TIMEOUTS=true" >> $GITHUB_ENV
-          echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false" >> $GITHUB_ENV
-          echo "NX_NO_CLOUD=true" >> $GITHUB_ENV
+          {
+            echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-pkg-pr-new"
+            echo "NX_CLOUD_NO_TIMEOUTS=true"
+            echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false"
+            echo "NX_NO_CLOUD=true"
+          } >> "$GITHUB_ENV"
 
       - name: Build
         run: pnpm run build
@@ -66,4 +72,46 @@ jobs:
       # single Node sandbox. That mixes browser, server, Angular, Vue, and React
       # Native packages, making the StackBlitz preview unusable. Package preview
       # URLs remain available without the default template.
-      - run: npx pkg-pr-new publish --pnpm --packageManager pnpm --no-template "./packages/*"
+      - name: Publish package previews
+        if: env.PKG_PR_NEW_ENABLED == 'true'
+        run: npx --yes pkg-pr-new@0.0.88 publish --pnpm --packageManager pnpm --no-template "./packages/*"
+
+      # Forks without the external app still build and pack every public package.
+      # Packing failures are real failures; they must not be ignored.
+      - name: Pack preview artifacts on unconfigured forks
+        if: env.PKG_PR_NEW_ENABLED != 'true'
+        run: |
+          node --input-type=module <<'NODE'
+          import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+          import path from 'node:path';
+          import { spawnSync } from 'node:child_process';
+          const destination = path.join(process.env.RUNNER_TEMP, 'package-previews');
+          mkdirSync(destination, { recursive: true });
+          let packed = 0;
+          for (const entry of readdirSync('packages', { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const directory = path.resolve('packages', entry.name);
+            const manifest = path.join(directory, 'package.json');
+            if (!existsSync(manifest)) continue;
+            if (JSON.parse(readFileSync(manifest, 'utf8')).private) continue;
+            const result = spawnSync('pnpm', ['pack', '--pack-destination', destination], {
+              cwd: directory, stdio: 'inherit',
+            });
+            if (result.error) throw result.error;
+            if (result.status !== 0) process.exit(result.status ?? 1);
+            packed++;
+          }
+          if (!packed) throw new Error('No public packages were packed');
+          console.log(`Packed ${packed} package previews`);
+          NODE
+          echo "::notice::pkg.pr.new publishing is not configured on this fork; package tarballs are attached to this workflow run. See .github/FORK_CI.md."
+          echo "Package build and packing passed. External publishing was not run; download the package-previews artifact or follow .github/FORK_CI.md to enable pkg.pr.new." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload fork package previews
+        if: env.PKG_PR_NEW_ENABLED != 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-previews-${{ github.sha }}
+          path: ${{ runner.temp }}/package-previews/*.tgz
+          if-no-files-found: error
+          retention-days: 7
