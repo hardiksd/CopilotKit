@@ -35,6 +35,24 @@ async function fixture(t, config = {}) {
   t.after(() => f.close());
   return f;
 }
+// Control only the adapter deadline; leave HTTP/Undici and fixture timers real.
+// A deadline must not race session creation or SSE setup on a busy CI runner.
+function controlledDeadline(t, delay) {
+  const original = globalThis.setTimeout;
+  let fire;
+  t.mock.method(globalThis, "setTimeout", (callback, ms, ...args) => {
+    if (ms !== delay) return original(callback, ms, ...args);
+    assert.equal(fire, undefined, "deadline should be scheduled once");
+    fire = () => callback(...args);
+    const handle = original(() => {}, delay);
+    t.after(() => clearTimeout(handle));
+    return handle;
+  });
+  return () => {
+    assert.ok(fire, "adapter should have scheduled its deadline");
+    fire();
+  };
+}
 const transcript = (events) =>
   events
     .filter((e) => e.type === "TEXT_MESSAGE_CONTENT")
@@ -405,31 +423,48 @@ test("early iterator return also cancels the upstream agent", async (t) => {
   assert.equal(f.calls.filter((c) => c.path.endsWith("/abort")).length, 1);
 });
 test("run timeout cancels OpenCode rather than merely closing SSE", async (t) => {
-  const f = await fixture(t, { onPrompt() {} });
-  await assert.rejects(
-    collect(
-      createOpenCodeBridge({
-        baseUrl: f.baseUrl,
-        scope: "u",
-        runTimeoutMs: 100,
-      }),
-    ),
-    code("RUN_TIMEOUT"),
-  );
-  assert.ok(f.calls.some((c) => c.path.endsWith("/abort")));
+  const expire = controlledDeadline(t, 60_001);
+  const f = await fixture(t, {
+    onPrompt({ s, emit, info, part }) {
+      emit(info(s));
+      emit(part(s, { type: "text", text: "working" }));
+    },
+  });
+  const bridge = createOpenCodeBridge({
+    baseUrl: f.baseUrl,
+    scope: "u",
+    runTimeoutMs: 60_001,
+  });
+  const events = bridge.stream({
+    input: input(),
+    abortSignal: new AbortController().signal,
+  });
+  assert.equal((await events.next()).done, false);
+  expire();
+  await assert.rejects(Array.fromAsync(events), code("RUN_TIMEOUT"));
+  assert.equal(f.calls.filter((c) => c.path.endsWith("/abort")).length, 1);
 });
 test("handshake timeout prevents submitting a prompt", async (t) => {
+  const expire = controlledDeadline(t, 60_002);
   const f = await fixture(t, { noHandshake: true });
-  await assert.rejects(
-    collect(
-      createOpenCodeBridge({
-        baseUrl: f.baseUrl,
-        scope: "u",
-        requestTimeoutMs: 75,
-      }),
-    ),
-    code("CONNECT_TIMEOUT"),
-  );
+  let connected;
+  const ready = new Promise((resolve) => {
+    connected = resolve;
+  });
+  const bridge = createOpenCodeBridge({
+    baseUrl: f.baseUrl,
+    scope: "u",
+    requestTimeoutMs: 60_002,
+    async fetch(url, options) {
+      const response = await fetch(url, options);
+      if (new URL(url).pathname === "/event") connected();
+      return response;
+    },
+  });
+  const rejected = assert.rejects(collect(bridge), code("CONNECT_TIMEOUT"));
+  await ready;
+  expire();
+  await rejected;
   assert.equal(
     f.calls.filter((c) => c.path.endsWith("prompt_async")).length,
     0,
@@ -770,18 +805,27 @@ test("failed validation does not leak capacity in the bounded store", async (t) 
   );
 });
 test("a false abort acknowledgement fails closed instead of reusing the session", async (t) => {
-  const f = await fixture(t, { abortReply: false, onPrompt() {} });
-  const bridge = createOpenCodeBridge({
-    baseUrl: f.baseUrl,
-    scope: "u",
-    runTimeoutMs: 40,
+  const f = await fixture(t, {
+    abortReply: false,
+    onPrompt({ s, emit, info, part }) {
+      emit(info(s));
+      emit(part(s, { type: "text", text: "working" }));
+    },
   });
-  await assert.rejects(collect(bridge), code("CANCEL_FAILED"));
-  await assert.rejects(
-    collect(bridge, input({ runId: "r2" })),
-    code("CANCEL_FAILED"),
-  );
+  const bridge = createOpenCodeBridge({ baseUrl: f.baseUrl, scope: "u" });
+  for (const runId of ["run1", "run2"]) {
+    const controller = new AbortController();
+    const events = bridge.stream({
+      input: input({ runId }),
+      abortSignal: controller.signal,
+    });
+    // Cancel only after the upstream session and prompt are established.
+    assert.equal((await events.next()).done, false);
+    controller.abort(new Error("user cancelled"));
+    await assert.rejects(Array.fromAsync(events), code("CANCEL_FAILED"));
+  }
   assert.equal(f.calls.filter((c) => c.path === "/session").length, 2);
+  assert.equal(f.calls.filter((c) => c.path.endsWith("/abort")).length, 2);
 });
 test("error names are not reflected from upstream into the browser", async (t) => {
   const f = await fixture(t, {

@@ -167,8 +167,11 @@ export async function startFixture(options = {}) {
     emit,
     async close() {
       for (const stream of streams) stream.end();
+      // Stop accepting connections before destroying sockets, including any
+      // connection that fetch may have opened while an earlier one was aborted.
+      const closed = new Promise((resolve) => server.close(resolve));
       server.closeAllConnections();
-      await new Promise((resolve) => server.close(resolve));
+      await closed;
     },
   };
 }
