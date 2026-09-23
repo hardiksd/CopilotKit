@@ -57,4 +57,5 @@ jobs:
         with:
           min-severity: low
           advanced-security: false
+          annotations: true
           config: .github/zizmor.yml
