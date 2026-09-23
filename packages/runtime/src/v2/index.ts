@@ -8,3 +8,11 @@ export * from "../agent";
 // runtime one explicitly (matching the v1 entry point) to resolve the
 // star-export ambiguity.
 export type { AgentFactoryContext } from "./runtime";
+
+// Optional OpenCode agentic-loop backend. Existing agents remain unchanged.
+export {
+  OpenCodeAgent,
+  OpenCodeBridgeError,
+  OpenCodeSessionStore,
+} from "../agent/opencode";
+export type { OpenCodeOptions } from "../agent/opencode";
