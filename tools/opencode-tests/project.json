@@ -1,0 +1,23 @@
+{
+  "name": "opencode-protocol-tests",
+  "targets": {
+    "test": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/opencode-tests/run-tests.mjs"
+      }
+    },
+    "runtime": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node --test --test-timeout=30000 tools/opencode-tests/runtime.test.mjs"
+      }
+    },
+    "live": {
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node tools/opencode-tests/live-smoke.mjs"
+      }
+    }
+  }
+}

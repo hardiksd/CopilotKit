@@ -60,7 +60,7 @@ jobs:
     name: ${{ matrix.suite }}
     # 4-vCPU runner (was depot-ubuntu-24.04 = 2 vCPU) to speed the build, the
     # dojo prep, and Playwright worker parallelism on the long-pole suites.
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ${{ github.repository == 'CopilotKit/CopilotKit' && 'depot-ubuntu-24.04-4' || 'ubuntu-latest' }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -150,12 +150,12 @@ jobs:
         run: |
           if [[ "${{ needs.detect-changes.outputs.ts-changed }}" == "true" ]] || \
              [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           elif [[ "${{ needs.detect-changes.outputs.python-changed }}" == "true" ]] && \
                [[ "${{ matrix.needs_python }}" == "true" ]]; then
-            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           else
-            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "⏭️ Skipping ${{ matrix.suite }} — no relevant changes"
           fi
 
@@ -210,7 +210,7 @@ jobs:
       - name: Resolve pnpm store path
         if: steps.should-run.outputs.skip != 'true'
         id: pnpm-store
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
         if: steps.should-run.outputs.skip != 'true'
@@ -256,10 +256,12 @@ jobs:
       - name: Configure Nx Cloud environment
         if: steps.should-run.outputs.skip != 'true'
         run: |
-          echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-e2e-dojo-${{ matrix.suite }}" >> $GITHUB_ENV
-          echo "NX_CLOUD_NO_TIMEOUTS=true" >> $GITHUB_ENV
-          echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false" >> $GITHUB_ENV
-          echo "NX_NO_CLOUD=true" >> $GITHUB_ENV
+          {
+            echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-e2e-dojo-${{ matrix.suite }}"
+            echo "NX_CLOUD_NO_TIMEOUTS=true"
+            echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false"
+            echo "NX_NO_CLOUD=true"
+          } >> "$GITHUB_ENV"
 
       - name: Build cpk packages
         if: steps.should-run.outputs.skip != 'true'

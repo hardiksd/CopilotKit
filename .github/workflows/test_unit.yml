@@ -41,7 +41,7 @@ concurrency:
 jobs:
   unit:
     name: "Node ${{ matrix.node-version }}, React ${{ matrix.react-version }}"
-    runs-on: depot-ubuntu-24.04-4
+    runs-on: ${{ github.repository == 'CopilotKit/CopilotKit' && 'depot-ubuntu-24.04-4' || 'ubuntu-latest' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -96,7 +96,7 @@ jobs:
 
       - name: Get pnpm store directory
         id: pnpm-cache
-        run: echo "store-path=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+        run: echo "store-path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store (scoped to Node.js version)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -153,11 +153,13 @@ jobs:
 
       - name: Configure Nx Cloud environment
         run: |
-          echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-unit-v1-${{ matrix.node-version }}-react${{ matrix.react-version }}" >> $GITHUB_ENV
-          echo "NX_CLOUD_NO_TIMEOUTS=true" >> $GITHUB_ENV
-          echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false" >> $GITHUB_ENV
-          echo "NX_NO_CLOUD=true" >> $GITHUB_ENV
-          echo "NX_TUI=false" >> $GITHUB_ENV
+          {
+            echo "NX_CI_EXECUTION_ID=${{ github.run_id }}-${{ github.run_attempt }}-unit-v1-${{ matrix.node-version }}-react${{ matrix.react-version }}"
+            echo "NX_CLOUD_NO_TIMEOUTS=true"
+            echo "NX_CLOUD_DISTRIBUTED_EXECUTION=false"
+            echo "NX_NO_CLOUD=true"
+            echo "NX_TUI=false"
+          } >> "$GITHUB_ENV"
 
       - name: Determine affected range
         # Pass GitHub context through env (not inline ${{ }} in the script) to
@@ -182,8 +184,10 @@ jobs:
               BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
             fi
           fi
-          echo "NX_BASE=${BASE}" >> "$GITHUB_ENV"
-          echo "NX_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          {
+            echo "NX_BASE=${BASE}"
+            echo "NX_HEAD=$(git rev-parse HEAD)"
+          } >> "$GITHUB_ENV"
           echo "Affected range: ${BASE:-<full>}...$(git rev-parse HEAD)"
 
       - name: Generate GraphQL codegen files
