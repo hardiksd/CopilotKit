@@ -1,0 +1,57 @@
+name: OpenCode adapter validation
+
+on:
+  push:
+    branches: [feat/opencode-runtime]
+  pull_request:
+    paths:
+      - packages/runtime/src/agent/opencode/**
+      - packages/runtime/src/v2/index.ts
+      - tools/opencode-tests/**
+      - .github/workflows/opencode-adapter.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: opencode-adapter-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      NX_DAEMON: "false"
+      NX_NO_CLOUD: "true"
+      COPILOTKIT_TELEMETRY_DISABLED: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+      SCARF_ANALYTICS: "false"
+      DO_NOT_TRACK: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+      - name: Install the fork's locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Protocol contracts (no real OpenCode)
+        run: pnpm exec nx run opencode-protocol-tests:test
+      - name: Build actual runtime and workspace dependencies
+        run: pnpm exec nx run @copilotkit/runtime:build
+      - name: Typecheck actual runtime
+        run: pnpm exec nx run @copilotkit/runtime:check-types
+      - name: Actual runtime wrapper and endpoint tests
+        run: pnpm exec nx run opencode-protocol-tests:runtime
+      - name: Install pinned OpenCode for the integration test only
+        run: npm install --global opencode-ai@1.18.32
+      - name: Actual OpenCode native-tool loop (local model fixture)
+        run: pnpm exec nx run opencode-protocol-tests:live
