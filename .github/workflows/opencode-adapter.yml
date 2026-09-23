@@ -51,7 +51,10 @@ jobs:
         run: pnpm exec nx run @copilotkit/runtime:check-types
       - name: Actual runtime wrapper and endpoint tests
         run: pnpm exec nx run opencode-protocol-tests:runtime
-      - name: Install pinned OpenCode for the integration test only
-        run: npm install --global opencode-ai@1.18.32
+      - name: Install locked OpenCode for the integration test only
+        working-directory: tools/opencode-tests/cli
+        run: npm ci --no-audit --no-fund
       - name: Actual OpenCode native-tool loop (local model fixture)
+        env:
+          OPENCODE_EXECUTABLE: ${{ github.workspace }}/tools/opencode-tests/cli/node_modules/.bin/opencode
         run: pnpm exec nx run opencode-protocol-tests:live
